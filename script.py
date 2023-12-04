@@ -146,7 +146,7 @@ def train(epoch):
         m.model.train()
 
     for batch_idx, (data, target) in enumerate(train_loader):
-        data, target = data.cuda(), target.cuda()
+        data, target = data.to(device), target.to(device)
         # Variables in Pytorch are differenciable.
         data, target = Variable(data), Variable(target)
         # This will zero out the gradients for this batch.
@@ -163,7 +163,7 @@ def test(data_loader):
         m.model.eval()
 
     for data, target in data_loader:
-        data, target = data.cuda(), target.cuda()
+        data, target = data.to(device), target.to(device)
         data, target = Variable(data), Variable(target)
 
         batch = (data, target)
@@ -332,7 +332,7 @@ for train_loader, test_loader, pretty_loader_name in zip(
             plot_with_confi(
                 test_auroc_data[idx],
                 color=blue_shades[idx],
-                label=f"Module Depth {m.depth} - Train AUROC",
+                label=f"Module Depth {m.depth} - Test AUROC",
             )
 
         plt.title(f"AUROC Target Digit {nr}")
@@ -358,10 +358,7 @@ for train_loader, test_loader, pretty_loader_name in zip(
         plt.xlabel("Epochs")
         plt.ylabel("MSE")
         plt.legend()
-
         plt.tight_layout()
-
         plt.savefig(os.path.join(p, f"performance_plot_{nr}.png"))
-
         plt.close()
         # plt.show()
