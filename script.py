@@ -335,10 +335,11 @@ for train_loader, test_loader, pretty_loader_name in zip(
                 label=f"Module Depth {m.depth} - Test AUROC",
             )
 
-        plt.title(f"AUROC Target Digit {nr}")
+        seeds = args["nr_seeds"]
+        plt.title(f"AUROC Target Digit {nr} - Random Seeds {seeds}")
         plt.xlabel("Epochs")
         plt.ylabel("AUROC")
-        plt.legend()
+        plt.legend(loc='center right')
 
         # MSE plots
         plt.subplot(2, 1, 2)
@@ -354,10 +355,10 @@ for train_loader, test_loader, pretty_loader_name in zip(
                 label=f"Module Depth {m.depth} - Test MSE",
             )
 
-        plt.title(f"MSE Target Digit {nr}")
+        plt.title(f"MSE Target Digit {nr} - Random Seeds {seeds}")
         plt.xlabel("Epochs")
         plt.ylabel("MSE")
-        plt.legend()
+        plt.legend(loc='center right')
         plt.tight_layout()
         plt.savefig(os.path.join(p, f"performance_plot_{nr}.png"))
         plt.close()
