@@ -16,14 +16,14 @@ import os
 from scipy import stats
 import copy
 import numpy as np
-
+from tqdm import tqdm
 args = {}
 kwargs = {}
 args["batch_size"] = 1000
 args["test_batch_size"] = 1000
 
 # The number of Epochs is the number of times you go through the full dataset.
-args["epochs"] = 2
+args["epochs"] = 10
 args["lr"] = 0.01  # Learning rate is how fast it will decend.
 
 # SGD momentum (default: 0.5) Momentum is a moving average of our gradients (helps to keep direction).
@@ -232,14 +232,14 @@ for train_loader, test_loader, pretty_loader_name in zip(
 
     # 2. Task Setting (which digit to use for training)
     for nr in range(args["nr_digits_to_test"]):
-        nr_modules = 5
+        nr_modules = 3
         train_auroc_data = init_ls(nr_modules, [[] for _ in range(args["nr_seeds"])])
         test_auroc_data = init_ls(nr_modules, [[] for _ in range(args["nr_seeds"])])
         train_mse_data = init_ls(nr_modules, [[] for _ in range(args["nr_seeds"])])
         test_mse_data = init_ls(nr_modules, [[] for _ in range(args["nr_seeds"])])
 
         # 3. Run multiple random seeds
-        for seed in range(args["nr_seeds"]):
+        for seed in tqdm(range(args["nr_seeds"]), colour = 'GREEN', desc="Seeds"):
             torch.manual_seed(seed)
 
             modules = []
@@ -264,13 +264,13 @@ for train_loader, test_loader, pretty_loader_name in zip(
                 m.metric.to(device)
                 m.mean_metric.to(device)
 
-            for epoch in range(args["epochs"]):
+            for epoch in tqdm(range(args["epochs"]), colour = 'BLUE', desc="Epochs"):
                 # 4. Run multiple epochs
 
                 test(data_loader=train_loader)
-                print(f"Evaluation Result Training-Dataset Epoch: {epoch:>4}")
+                tqdm.write(f"Evaluation Result Training-Dataset Epoch: {epoch:>4}  Seed {seed:>4}  Task: {nr:>4}")
                 for idx, m in enumerate(modules):
-                    print(
+                    tqdm.write(
                         f"Module Depth {m.depth}   AUROC: {m.metric.compute().item():.3f}   MSE on Target Examples: {m.mean_metric.compute().item():.3f}"
                     )
                     train_auroc_data[idx][seed].append(m.metric.compute().item())
@@ -280,9 +280,9 @@ for train_loader, test_loader, pretty_loader_name in zip(
                     m.metric.reset()
 
                 test(data_loader=test_loader)
-                print(f"Evaluation Result Test-Dataset Epoch: {epoch:>4}")
+                tqdm.write(f"Evaluation Result Test-Dataset Epoch: {epoch:>4}  Seed {seed:>4}  Task: {nr:>4}")
                 for idx, m in enumerate(modules):
-                    print(
+                    tqdm.write(
                         f"Module Depth {m.depth}   AUROC: {m.metric.compute().item():.3f}   MSE on Target Examples: {m.mean_metric.compute().item():.3f}"
                     )
                     test_auroc_data[idx][seed].append(m.metric.compute().item())
@@ -291,8 +291,8 @@ for train_loader, test_loader, pretty_loader_name in zip(
                     m.mean_metric.reset()
                     m.metric.reset()
 
-                print(" ")
-                print(" ")
+                tqdm.write(" ")
+                tqdm.write(" ")
                 train(epoch)
 
         # Create plots for each run per digit
