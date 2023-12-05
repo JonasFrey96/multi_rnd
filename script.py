@@ -19,8 +19,8 @@ import numpy as np
 from tqdm import tqdm
 args = {}
 kwargs = {}
-args["batch_size"] = 1000
-args["test_batch_size"] = 1000
+args["batch_size"] = 1024
+args["test_batch_size"] = 1024
 
 # The number of Epochs is the number of times you go through the full dataset.
 args["epochs"] = 10
@@ -29,16 +29,15 @@ args["lr"] = 0.01  # Learning rate is how fast it will decend.
 # SGD momentum (default: 0.5) Momentum is a moving average of our gradients (helps to keep direction).
 
 args["momentum"] = 0.5
-args["nr_seeds"] = 3  # random seed
-args["log_interval"] = 10
+args["nr_seeds"] = 5  # random seed
 
 # if number = 1 only digit 0 is tested, 2 -> [0,1] is tested
 args["nr_digits_to_test"] = 10
-
+nr_modules = 6
 device = "cuda"
 
 root_folder = "/media/jfrey/git/multi_rnd/results"
-run_name = "all_datasets"
+run_name = "all_datasets_fixed_auroc_and_digit"
 
 
 class TwinNet(nn.Module):
@@ -98,8 +97,10 @@ class SimpleModule:
         self.model = TwinNet(input_dim=input_dim, hidden_layer=hidden_layer, bn=bn)
         self.optimizer = optim.SGD(self.model.net.parameters(), lr=lr)
         self.depth = len(hidden_layer)
-        self.metric = AUROC(task="binary", thresholds=10000)
+        self.metric = AUROC(task="binary")
         self.mean_metric = torchmetrics.aggregation.MeanMetric()
+        self.mean_metric_ood = torchmetrics.aggregation.MeanMetric()
+
         self.in_distribution = in_distribution
 
     def training_step(self, batch):
@@ -162,23 +163,39 @@ def test(data_loader):
     for m in modules:
         m.model.eval()
 
+    losses = [ [] for m in modules]
+    targets = [ [] for m in modules]
+
     for data, target in data_loader:
         data, target = data.to(device), target.to(device)
         data, target = Variable(data), Variable(target)
 
         batch = (data, target)
 
-        for m in modules:
+        for j,m in enumerate(modules):
             loss = m.test_step(batch)
 
-            target = target == 0
+            target = target == m.in_distribution
 
             m.mean_metric(loss[target])
+            m.mean_metric_ood(loss[~target])
             # This is sketchy given that the normalization is now done per batch
             # In later iteration define normalization over the full dataset instead
-            loss = loss / loss.max()
+            losses[j].append( loss.clone() )
+            targets[j].append( target.clone() )
+            #loss = loss / loss.max()
 
-            m.metric(loss, target)
+    for j,m in enumerate(modules):
+        # to compute the auroc we assume the mse is between 0 and a high positive value
+        # we scale it to 0-1
+        # then given that the lowest mse should be classified as an inlier we do 1-mse 
+        lo = torch.cat( losses[j])
+        lo /= lo.max()
+        lo = 1-lo
+
+        m.metric(lo, torch.cat(targets[j]))
+
+
 
 
 def init_ls(nr, ele):
@@ -220,9 +237,11 @@ for d in [datasets.MNIST, datasets.KMNIST, datasets.FashionMNIST]:
     )
 pretty_loader_names = ["MNIST", "KMNIST", "FashionMNIST"]
 
-red_shades = ["salmon", "darkred", "firebrick", "indianred", "lightcoral"]
-blue_shades = ["cyan", "darkblue", "mediumblue", "royalblue", "deepskyblue"]
+red_shades = ["salmon", "darkred", "firebrick", "indianred", "lightcoral", "red"]
+blue_shades = ["cyan", "darkblue", "mediumblue", "royalblue", "deepskyblue", "blue"]
 
+
+assert nr_modules <= len(blue_shades)
 # 1. Dataloaders
 for train_loader, test_loader, pretty_loader_name in zip(
     train_loaders, test_loaders, pretty_loader_names
@@ -232,11 +251,13 @@ for train_loader, test_loader, pretty_loader_name in zip(
 
     # 2. Task Setting (which digit to use for training)
     for nr in range(args["nr_digits_to_test"]):
-        nr_modules = 3
+        
         train_auroc_data = init_ls(nr_modules, [[] for _ in range(args["nr_seeds"])])
         test_auroc_data = init_ls(nr_modules, [[] for _ in range(args["nr_seeds"])])
         train_mse_data = init_ls(nr_modules, [[] for _ in range(args["nr_seeds"])])
+        train_mse_data_ood = init_ls(nr_modules, [[] for _ in range(args["nr_seeds"])])
         test_mse_data = init_ls(nr_modules, [[] for _ in range(args["nr_seeds"])])
+        test_mse_data_ood = init_ls(nr_modules, [[] for _ in range(args["nr_seeds"])])
 
         # 3. Run multiple random seeds
         for seed in tqdm(range(args["nr_seeds"]), colour = 'GREEN', desc="Seeds"):
@@ -247,7 +268,7 @@ for train_loader, test_loader, pretty_loader_name in zip(
                 modules.append(
                     SimpleModule(
                         input_dim=784,
-                        hidden_layer=[64] * i,
+                        hidden_layer=[32] * i,
                         bn=False,
                         lr=0.01,
                         in_distribution=nr,
@@ -263,6 +284,7 @@ for train_loader, test_loader, pretty_loader_name in zip(
                 m.model.to(device)
                 m.metric.to(device)
                 m.mean_metric.to(device)
+                m.mean_metric_ood.to(device)
 
             for epoch in tqdm(range(args["epochs"]), colour = 'BLUE', desc="Epochs"):
                 # 4. Run multiple epochs
@@ -271,24 +293,28 @@ for train_loader, test_loader, pretty_loader_name in zip(
                 tqdm.write(f"Evaluation Result Training-Dataset Epoch: {epoch:>4}  Seed {seed:>4}  Task: {nr:>4}")
                 for idx, m in enumerate(modules):
                     tqdm.write(
-                        f"Module Depth {m.depth}   AUROC: {m.metric.compute().item():.3f}   MSE on Target Examples: {m.mean_metric.compute().item():.3f}"
+                        f"Module Depth {m.depth}   AUROC: {m.metric.compute().item():.3f}   MSE on Target Examples: {m.mean_metric.compute().item():.3f} MSE OOD Examples: {m.mean_metric_ood.compute().item():.3f}"
                     )
                     train_auroc_data[idx][seed].append(m.metric.compute().item())
                     train_mse_data[idx][seed].append(m.mean_metric.compute().item())
+                    train_mse_data_ood[idx][seed].append(m.mean_metric_ood.compute().item())
 
                     m.mean_metric.reset()
+                    m.mean_metric_ood.reset()
                     m.metric.reset()
 
                 test(data_loader=test_loader)
                 tqdm.write(f"Evaluation Result Test-Dataset Epoch: {epoch:>4}  Seed {seed:>4}  Task: {nr:>4}")
                 for idx, m in enumerate(modules):
                     tqdm.write(
-                        f"Module Depth {m.depth}   AUROC: {m.metric.compute().item():.3f}   MSE on Target Examples: {m.mean_metric.compute().item():.3f}"
+                        f"Module Depth {m.depth}   AUROC: {m.metric.compute().item():.3f}   MSE on Target Examples: {m.mean_metric.compute().item():.3f} MSE OOD Examples: {m.mean_metric_ood.compute().item():.3f}"
                     )
                     test_auroc_data[idx][seed].append(m.metric.compute().item())
                     test_mse_data[idx][seed].append(m.mean_metric.compute().item())
+                    test_mse_data_ood[idx][seed].append(m.mean_metric_ood.compute().item())
 
                     m.mean_metric.reset()
+                    m.mean_metric_ood.reset()
                     m.metric.reset()
 
                 tqdm.write(" ")
@@ -296,7 +322,7 @@ for train_loader, test_loader, pretty_loader_name in zip(
                 train(epoch)
 
         # Create plots for each run per digit
-        plt.figure(figsize=(12, 8))
+        plt.figure(figsize=(12, 12))
 
         def plot_with_confi(data, color, label):
             data_array = np.array(data)
@@ -322,7 +348,7 @@ for train_loader, test_loader, pretty_loader_name in zip(
             )
 
         # AUROC plots
-        plt.subplot(2, 1, 1)
+        plt.subplot(3, 1, 1)
         for idx, m in enumerate(modules):
             plot_with_confi(
                 train_auroc_data[idx],
@@ -342,7 +368,7 @@ for train_loader, test_loader, pretty_loader_name in zip(
         plt.legend(loc='center right')
 
         # MSE plots
-        plt.subplot(2, 1, 2)
+        plt.subplot(3, 1, 2)
         for idx, m in enumerate(modules):
             plot_with_confi(
                 train_mse_data[idx],
@@ -359,6 +385,29 @@ for train_loader, test_loader, pretty_loader_name in zip(
         plt.xlabel("Epochs")
         plt.ylabel("MSE")
         plt.legend(loc='center right')
+
+
+        # MSE plots OOD
+        plt.subplot(3, 1, 3)
+        for idx, m in enumerate(modules):
+            plot_with_confi(
+                train_mse_data_ood[idx],
+                color=red_shades[idx],
+                label=f"Module Depth {m.depth} - Train MSE",
+            )
+            plot_with_confi(
+                test_mse_data_ood[idx],
+                color=blue_shades[idx],
+                label=f"Module Depth {m.depth} - Test MSE",
+            )
+
+        plt.title(f"MSE OOD Digit {nr} - Random Seeds {seeds}")
+        plt.xlabel("Epochs")
+        plt.ylabel("MSE OOD")
+        plt.legend(loc='center right')
+
+
+
         plt.tight_layout()
         plt.savefig(os.path.join(p, f"performance_plot_{nr}.png"))
         plt.close()
